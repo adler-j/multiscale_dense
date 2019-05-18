@@ -236,3 +236,52 @@ class MSDBlock2d(torch.nn.Module):
 
     def forward(self, input):
         return msdblock(input, self.weight, self.bias, self.dilations, self.blocksize)
+
+
+class MSDBlock3d(torch.nn.Module):
+    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=False):
+        """Multi-scale dense block
+
+        Parameters
+        ----------
+        in_channels : int
+            Number of input channels
+        dilations : tuple of int
+            Dilation for each convolution-block
+        kernel_size : int or tuple of ints
+            Kernel size (only 3 supported ATM)
+        blocksize : int
+            Number of channels per convolution.
+
+        Notes
+        -----
+        The number of output channels is in_channels + n_conv * blocksize
+        """
+        super().__init__()
+        self.kernel_size = torch.nn.functional._triple(kernel_size)
+        self.blocksize = blocksize
+        self.dilations = [torch.nn.functional._triple(dilation)
+                          for dilation in dilations]
+
+        n_conv = len(self.dilations)
+        max_in = in_channels + blocksize * (n_conv - 1)
+        total_out = blocksize * n_conv
+        self.weight = torch.nn.Parameter(torch.Tensor(total_out, max_in, *self.kernel_size))
+
+        if bias:
+            assert False
+            self.bias = torch.nn.Parameter(torch.Tensor(n_conv * blocksize))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch.nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / np.sqrt(fan_in)
+            torch.nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        return msdblock(input, self.weight, self.bias, self.dilations, self.blocksize)
