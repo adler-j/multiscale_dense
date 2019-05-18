@@ -5,7 +5,7 @@ from multiscale_dense.pytorch_workaround import (
         conv2d_weight, conv2d_input,
         conv3d_weight, conv3d_input)
 
-__all__ = ('msdblock', 'MSDBlock2d')
+__all__ = ('msdblock', 'MSDBlock2d', 'MSDBlock3d')
 
 class MSDBlockImpl(torch.autograd.Function):
     @staticmethod
