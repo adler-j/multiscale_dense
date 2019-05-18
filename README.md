@@ -10,3 +10,6 @@ Using the block is straightforward. Simply specify what dilations to use and the
     >>> result = model(img)
     >>> result.shape
     torch.Size([1, 5, 3, 3])
+
+# Implementation details
+The implementation is hand-written PyTorch and hence the memory use is minimal while also having a fast runtime.
