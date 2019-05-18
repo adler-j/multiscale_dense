@@ -1,8 +1,11 @@
 import torch
 import numpy as np
-from multiscale_dense.pytorch_workaround import conv2d_weight, conv2d_input
+from multiscale_dense.pytorch_workaround import (
+        conv1d_weight, conv1d_input,
+        conv2d_weight, conv2d_input,
+        conv3d_weight, conv3d_input)
 
-__all__ = ('MSDBlock', 'msdblock')
+__all__ = ('msdblock', 'MSDBlock2d')
 
 class MSDBlockImpl(torch.autograd.Function):
     @staticmethod
@@ -14,6 +17,7 @@ class MSDBlockImpl(torch.autograd.Function):
         cxt.dilations = dilations
         cxt.n_conv = len(dilations)
         cxt.blocksize = blocksize
+        cxt.ndim = input.dim() - 2
 
         result = torch.Tensor(input.shape[0], input.shape[1] + blocksize * cxt.n_conv, *input.shape[2:])
         result[:, :input.shape[1]] = input
@@ -24,6 +28,15 @@ class MSDBlockImpl(torch.autograd.Function):
         result_start = input.shape[1]
         bias_start = 0
 
+        if cxt.ndim == 1:
+            conv = torch.nn.functional.conv1d
+        elif cxt.ndim == 2:
+            conv = torch.nn.functional.conv2d
+        elif cxt.ndim == 3:
+            conv = torch.nn.functional.conv3d
+        else:
+            raise ValueError('Only supports 1 2 or 3 dimensions')
+
         for i in range(cxt.n_conv):
             # Extract variables
             sub_weight = weight[w_start:w_start + w_len, :result_start]
@@ -31,7 +44,7 @@ class MSDBlockImpl(torch.autograd.Function):
             dilation = cxt.dilations[i]
 
             # Compute convolution
-            sub_result = torch.nn.functional.conv2d(
+            sub_result = conv(
                 result[:, :result_start],
                 sub_weight,
                 bias,
@@ -69,6 +82,18 @@ class MSDBlockImpl(torch.autograd.Function):
         grad_input = grad_output.clone()
         grad_weight = torch.zeros_like(weight)
 
+        if cxt.ndim == 1:
+            conv_weight = conv1d_weight
+            conv_input = conv1d_input
+        elif cxt.ndim == 2:
+            conv_weight = conv2d_weight
+            conv_input = conv2d_input
+        elif cxt.ndim == 3:
+            conv_weight = conv3d_weight
+            conv_input = conv3d_input
+        else:
+            raise ValueError('Only supports 1 2 or 3 dimensions')
+
         for i in range(n_conv):
             input_shape = [input.shape[0], result_start, *input.shape[2:]]
             padding = cxt.paddings[n_conv - 1 - i]
@@ -85,12 +110,13 @@ class MSDBlockImpl(torch.autograd.Function):
             if cxt.needs_input_grad[1]:
                 sub_input = result[:, :result_start]
                 sub_weight_shape = sub_weight.shape
-                sub_grad_weight = conv2d_weight(sub_input, sub_weight_shape, sub_grad_output,
-                                                                         cxt.stride, padding, dilation, cxt.groups)
+                sub_grad_weight = conv_weight(
+                    sub_input, sub_weight_shape, sub_grad_output,
+                    cxt.stride, padding, dilation, cxt.groups)
                 grad_weight[w_start:w_end, :result_start] = sub_grad_weight
 
             # Gradient of Conv
-            sub_grad_input = conv2d_input(
+            sub_grad_input = conv_input(
                 input_shape, sub_weight, sub_grad_output,
                 cxt.stride, padding, dilation, cxt.groups)
 
@@ -113,7 +139,57 @@ class MSDBlockImpl(torch.autograd.Function):
 
 msdblock = MSDBlockImpl.apply
 
-class MSDBlock(torch.nn.Module):
+
+class MSDBlock2d(torch.nn.Module):
+    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=False):
+        """Multi-scale dense block
+
+        Parameters
+        ----------
+        in_channels : int
+            Number of input channels
+        dilations : tuple of int
+            Dilation for each convolution-block
+        kernel_size : int or tuple of ints
+            Kernel size (only 3 supported ATM)
+        blocksize : int
+            Number of channels per convolution.
+
+        Notes
+        -----
+        The number of output channels is in_channels + n_conv * blocksize
+        """
+        super().__init__()
+        self.kernel_size = torch.nn.functional._pair(kernel_size)
+        self.blocksize = blocksize
+        self.dilations = [torch.nn.functional._pair(dilation)
+                          for dilation in dilations]
+
+        n_conv = len(self.dilations)
+        max_in = in_channels + blocksize * (n_conv - 1)
+        total_out = blocksize * n_conv
+        self.weight = torch.nn.Parameter(torch.Tensor(total_out, max_in, *self.kernel_size))
+
+        if bias:
+            assert False
+            self.bias = torch.nn.Parameter(torch.Tensor(n_conv * blocksize))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch.nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / np.sqrt(fan_in)
+            torch.nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        return msdblock(input, self.weight, self.bias, self.dilations, self.blocksize)
+
+
+class MSDBlock2d(torch.nn.Module):
     def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=False):
         """Multi-scale dense block
 
