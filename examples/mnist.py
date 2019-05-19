@@ -7,6 +7,8 @@ import torch.nn.functional as F
 
 import multiscale_dense as msd
 
+device = 'cuda'
+
 transform = transforms.Compose(
     [transforms.ToTensor()])
 
@@ -27,31 +29,29 @@ classes = ('plane', 'car', 'bird', 'cat',
 class ConvNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)
+        self.conv1 = nn.Conv2d(1, 32, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(256, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        self.conv2 = nn.Conv2d(32, 16, 5)
+        self.fc1 = nn.Linear(256, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 256)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = x.view(x.shape[0], -1)
+        x = self.fc1(x)
         return x
 
 
 class MSDNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = msd.MSDBlock2d(1, [1 for i in range(5)])
+        self.conv1 = msd.MSDBlock2d(1, [1 for i in range(5)],
+                                    blocksize=2)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = msd.MSDBlock2d(6, [1 for i in range(5)])
+        self.conv2 = msd.MSDBlock2d(11, [1 for i in range(5)],
+                                    blocksize=2)
 
-        self.fc1 = nn.Linear(11 * 7 * 7, 10)
+        self.fc1 = nn.Linear(21 * 7 * 7, 10)
 
     def forward(self, x):
         x = self.pool(self.conv1(x))
@@ -61,17 +61,19 @@ class MSDNet(nn.Module):
         return x
 
 
-net = MSDNet()
+net = MSDNet().to(device)
 
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.Adam(net.parameters(), lr=0.001)
 
-for epoch in range(20):  # loop over the dataset multiple times
+for epoch in range(50):  # loop over the dataset multiple times
 
     running_loss = 0.0
     for i, data in enumerate(trainloader, 0):
         # get the inputs
         inputs, labels = data
+        inputs = inputs.to(device)
+        labels = labels.to(device)
 
         # zero the parameter gradients
         optimizer.zero_grad()
@@ -93,13 +95,15 @@ for epoch in range(20):  # loop over the dataset multiple times
     total = 0
     with torch.no_grad():
         for data in testloader:
-            images, labels = data
-            outputs = net(images)
+            inputs, labels = data
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            outputs = net(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    print('Accuracy of the network on the 10000 test images: %d %%' % (
-        10000 * correct / total))
+    print('Accuracy of the network on the 10000 test images: %.5f %%' % (
+        100 * correct / total))
 
 print('Finished Training')
