@@ -103,13 +103,13 @@ class MSDBlockImpl(torch.autograd.Function):
             sub_weight = weights[n_conv - 1 - i]
 
             # Gradient of ReLU
-            # sub_grad_output[result[:, result_start:result_end] <= 0] = 0
-            sub_grad_output *= (result[:, result_start:result_end] >= 0).type(sub_grad_output.dtype)
+            sub_grad_output *= (result[:, result_start:result_end] > 0).type(sub_grad_output.dtype)
 
             # Gradient w.r.t weights
-            if cxt.needs_input_grad[i + IDX_WEIGHT_START]:
+            if True and cxt.needs_input_grad[i + IDX_WEIGHT_START]:
                 sub_input = result[:, :result_start]
                 sub_weight_shape = sub_weight.shape
+
                 sub_grad_weight = conv_weight(
                     sub_input, sub_weight_shape, sub_grad_output,
                     cxt.stride, padding, dilation, cxt.groups)

@@ -20,7 +20,7 @@ def test_grad_2d():
     assert torch.autograd.gradcheck(
             msd.msdblock,
             (img, model.weight, model.bias, model.dilations, model.blocksize),
-            eps=1e-3, atol=1e-2, rtol=1e-2, raise_exception=False)
+            eps=1e-4, atol=1e-2, rtol=1e-2, raise_exception=False)
 
 def test_3d():
     # Test forward evaluation
@@ -41,7 +41,7 @@ def test_grad_3d():
     assert torch.autograd.gradcheck(
             msd.msdblock,
             (img, model.weight, model.bias, model.dilations, model.blocksize),
-            eps=1e-3, atol=1e-2, rtol=1e-2, raise_exception=False)
+            eps=1e-4, atol=1e-2, rtol=1e-2, raise_exception=False)
 
 if __name__ == '__main__':
     import pytest

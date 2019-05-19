@@ -7,8 +7,8 @@ import numpy as np
 # Test forward evaluation
 img = torch.nn.Parameter(torch.ones((1, 1, 5, 5)))
 
-dilations = [1, 1, 1, 1, 1]
-model = msd.MSDBlock2d(1, dilations=dilations, blocksize=2)
+dilations = [1, 1]
+model = msd.MSDBlock2d(1, dilations=dilations, blocksize=1)
 
 inp = (img, model.bias, model.dilations, model.blocksize, *model.weights)
 
@@ -23,3 +23,9 @@ print('input error:',
 for i in range(len(dilations)):
     print('weight{} error:'.format(i),
           torch.max(torch.abs(jac_num[i + 1] - jac_an[0][i + 1])) / torch.max(torch.abs(jac_num[1])))
+
+plt.figure()
+plt.imshow(jac_num[0])
+
+plt.figure()
+plt.imshow(jac_an[0][0])
