@@ -33,7 +33,8 @@ class MSDBlockImpl(torch.autograd.Function):
 
         result = torch.empty(input.shape[0],
                              input.shape[1] + blocksize * cxt.n_conv,
-                             *input.shape[2:])
+                             *input.shape[2:],
+                             device=input.device)
         result[:, :input.shape[1]] = input
 
         result_start = input.shape[1]
