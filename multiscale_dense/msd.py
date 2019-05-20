@@ -45,7 +45,7 @@ class MSDBlockImpl(torch.autograd.Function):
             sub_bias = bias[i * blocksize:(i+1) * blocksize] if bias is not None else None
             padding = cxt.paddings[i]
             dilation = cxt.dilations[i]
-
+            
             # Compute convolution
             sub_result = conv(
                 result[:, :result_start],
@@ -97,13 +97,14 @@ class MSDBlockImpl(torch.autograd.Function):
         result_start = result_end - blocksize
 
         for i in range(n_conv):
+            idx = n_conv - 1 - i
             input_shape = [input.shape[0], result_start, *input.shape[2:]]
-            padding = cxt.paddings[n_conv - 1 - i]
-            dilation = cxt.dilations[n_conv - 1 - i]
+            padding = cxt.paddings[idx]
+            dilation = cxt.dilations[idx]
 
             # Get subsets
             sub_grad_output = grad_input[:, -blocksize:]
-            sub_weight = weights[n_conv - 1 - i]
+            sub_weight = weights[idx]
 
             # Gradient of ReLU
             sub_grad_output *= (result[:, result_start:result_end] > 0).type(sub_grad_output.dtype)
@@ -128,7 +129,7 @@ class MSDBlockImpl(torch.autograd.Function):
             # Gradient of Bias
             if bias is not None and cxt.needs_input_grad[1]:
                 sum_idx = [0] + list(range(2,2+cxt.ndim))
-                grad_bias[n_conv - 1 - i] = sub_grad_output.sum(sum_idx)
+                grad_bias[idx * blocksize:(idx + 1) * blocksize] = sub_grad_output.sum(sum_idx)
             
             # Gradient of concatenation
             grad_input = grad_input[:, :-blocksize] + sub_grad_input
