@@ -5,7 +5,7 @@ from multiscale_dense.pytorch_workaround import (
         conv2d_weight, conv2d_input,
         conv3d_weight, conv3d_input)
 
-__all__ = ('msdblock', 'MSDBlock2d', 'MSDBlock3d')
+__all__ = ('msdblock', 'MSDBlock1d', 'MSDBlock2d', 'MSDBlock3d')
 
 IDX_WEIGHT_START = 4
 
@@ -13,7 +13,6 @@ class MSDBlockImpl(torch.autograd.Function):
 
     @staticmethod
     def forward(cxt, input, bias, dilations, blocksize, *weights):
-        bias = None
         cxt.stride = 1
         cxt.paddings = dilations
         cxt.groups = 1
@@ -43,6 +42,7 @@ class MSDBlockImpl(torch.autograd.Function):
         for i in range(cxt.n_conv):
             # Extract variables
             sub_weight = weights[i]
+            sub_bias = bias[i * blocksize:(i+1) * blocksize] if bias is not None else None
             padding = cxt.paddings[i]
             dilation = cxt.dilations[i]
 
@@ -50,9 +50,9 @@ class MSDBlockImpl(torch.autograd.Function):
             sub_result = conv(
                 result[:, :result_start],
                 sub_weight,
-                bias,
+                sub_bias,
                 cxt.stride, padding, dilation, cxt.groups)
-
+            
             # Apply ReLU
             torch.relu_(sub_result)
 
@@ -83,14 +83,13 @@ class MSDBlockImpl(torch.autograd.Function):
         else:
             raise ValueError('Only supports 1 2 or 3 dimensions')
 
-        grad_input = grad_bias = None
-
         n_conv = cxt.n_conv
         blocksize = cxt.blocksize
         
         # Input is part of the result, so we can extract it
         input = result[:, :weights[0].shape[1]]
 
+        grad_bias = torch.empty_like(bias) if bias is not None else None
         grad_input = grad_output.clone()
         grad_weights = []
         
@@ -126,6 +125,11 @@ class MSDBlockImpl(torch.autograd.Function):
                 input_shape, sub_weight, sub_grad_output,
                 cxt.stride, padding, dilation, cxt.groups)
 
+            # Gradient of Bias
+            if bias is not None and cxt.needs_input_grad[1]:
+                sum_idx = [0] + list(range(2,2+cxt.ndim))
+                grad_bias[n_conv - 1 - i] = sub_grad_output.sum(sum_idx)
+            
             # Gradient of concatenation
             grad_input = grad_input[:, :-blocksize] + sub_grad_input
 
@@ -133,19 +137,72 @@ class MSDBlockImpl(torch.autograd.Function):
             result_end -= blocksize
             result_start = result_end - blocksize
 
-            if bias is not None and cxt.needs_input_grad[2]:
-                grad_bias = grad_output.sum(0).squeeze(0)
-
-        if bias is not None:
-            return (grad_input, grad_bias, None, None, *grad_weights)
-        else:
-            return (grad_input, None, None, None, *grad_weights)
+        return (grad_input, grad_bias, None, None, *grad_weights)
 
 msdblock = MSDBlockImpl.apply
 
 
+class MSDBlock1d(torch.nn.Module):
+    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=True):
+        """Multi-scale dense block
+
+        Parameters
+        ----------
+        in_channels : int
+            Number of input channels
+        dilations : tuple of int
+            Dilation for each convolution-block
+        kernel_size : int or tuple of ints
+            Kernel size (only 3 supported ATM)
+        blocksize : int
+            Number of channels per convolution.
+
+        Notes
+        -----
+        The number of output channels is in_channels + n_conv * blocksize
+        """
+        super().__init__()
+        self.kernel_size = torch.nn.functional._single(kernel_size)
+        self.blocksize = blocksize
+        self.dilations = [torch.nn.functional._single(dilation)
+                          for dilation in dilations]
+
+        n_conv = len(self.dilations)
+
+        self.weights = []
+        for i in range(n_conv):
+            n_in = in_channels + blocksize * i
+
+            weight = torch.nn.Parameter(torch.Tensor(
+                blocksize, n_in, *self.kernel_size))
+
+            self.register_parameter('weight{}'.format(i), weight)
+            self.weights.append(weight)
+
+        if bias:
+            self.bias = torch.nn.Parameter(torch.Tensor(n_conv * blocksize))
+        else:
+            self.register_parameter('bias', None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        for weight in self.weights:
+            torch.nn.init.kaiming_uniform_(weight, a=np.sqrt(5))
+
+        if self.bias is not None:
+            # TODO: improve
+            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weights[0])
+            bound = 1 / np.sqrt(fan_in)
+            torch.nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        return msdblock(input, self.bias, self.dilations, self.blocksize,
+                        *self.weights)
+    
+    
 class MSDBlock2d(torch.nn.Module):
-    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=False):
+    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=True):
         """Multi-scale dense block
 
         Parameters
@@ -182,7 +239,6 @@ class MSDBlock2d(torch.nn.Module):
             self.weights.append(weight)
 
         if bias:
-            assert False
             self.bias = torch.nn.Parameter(torch.Tensor(n_conv * blocksize))
         else:
             self.register_parameter('bias', None)
@@ -194,7 +250,8 @@ class MSDBlock2d(torch.nn.Module):
             torch.nn.init.kaiming_uniform_(weight, a=np.sqrt(5))
 
         if self.bias is not None:
-            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight)
+            # TODO: improve
+            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weights[0])
             bound = 1 / np.sqrt(fan_in)
             torch.nn.init.uniform_(self.bias, -bound, bound)
 
@@ -204,7 +261,7 @@ class MSDBlock2d(torch.nn.Module):
 
 
 class MSDBlock3d(torch.nn.Module):
-    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=False):
+    def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=True):
         """Multi-scale dense block
 
         Parameters
@@ -241,7 +298,6 @@ class MSDBlock3d(torch.nn.Module):
             self.weights.append(weight)
 
         if bias:
-            assert False
             self.bias = torch.nn.Parameter(torch.Tensor(n_conv * blocksize))
         else:
             self.register_parameter('bias', None)
@@ -253,7 +309,8 @@ class MSDBlock3d(torch.nn.Module):
             torch.nn.init.kaiming_uniform_(weight, a=np.sqrt(5))
 
         if self.bias is not None:
-            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight)
+            # TODO: improve
+            fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weights[0])
             bound = 1 / np.sqrt(fan_in)
             torch.nn.init.uniform_(self.bias, -bound, bound)
 
