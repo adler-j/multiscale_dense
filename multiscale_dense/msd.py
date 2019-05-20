@@ -63,13 +63,13 @@ class MSDBlockImpl(torch.autograd.Function):
             result_start += blocksize
             bias_start += blocksize
 
-        cxt.save_for_backward(input, bias, result, *weights)
+        cxt.save_for_backward(bias, result, *weights)
 
         return result
 
     @staticmethod
     def backward(cxt, grad_output):
-        input, bias, result, *weights = cxt.saved_tensors
+        bias, result, *weights = cxt.saved_tensors
 
         if cxt.ndim == 1:
             conv_weight = conv1d_weight
@@ -87,12 +87,15 @@ class MSDBlockImpl(torch.autograd.Function):
 
         n_conv = cxt.n_conv
         blocksize = cxt.blocksize
-
-        result_end = input.shape[1] + n_conv * blocksize
-        result_start = result_end - blocksize
+        
+        # Input is part of the result, so we can extract it
+        input = result[:, :weights[0].shape[1]]
 
         grad_input = grad_output.clone()
         grad_weights = []
+        
+        result_end = input.shape[1] + n_conv * blocksize
+        result_start = result_end - blocksize
 
         for i in range(n_conv):
             input_shape = [input.shape[0], result_start, *input.shape[2:]]
@@ -130,8 +133,8 @@ class MSDBlockImpl(torch.autograd.Function):
             result_end -= blocksize
             result_start = result_end - blocksize
 
-        if bias is not None and cxt.needs_input_grad[2]:
-            grad_bias = grad_output.sum(0).squeeze(0)
+            if bias is not None and cxt.needs_input_grad[2]:
+                grad_bias = grad_output.sum(0).squeeze(0)
 
         if bias is not None:
             return (grad_input, grad_bias, None, None, *grad_weights)
@@ -226,9 +229,16 @@ class MSDBlock3d(torch.nn.Module):
                           for dilation in dilations]
 
         n_conv = len(self.dilations)
-        max_in = in_channels + blocksize * (n_conv - 1)
-        total_out = blocksize * n_conv
-        self.weight = torch.nn.Parameter(torch.Tensor(total_out, max_in, *self.kernel_size))
+
+        self.weights = []
+        for i in range(n_conv):
+            n_in = in_channels + blocksize * i
+
+            weight = torch.nn.Parameter(torch.Tensor(
+                blocksize, n_in, *self.kernel_size))
+
+            self.register_parameter('weight{}'.format(i), weight)
+            self.weights.append(weight)
 
         if bias:
             assert False
@@ -239,11 +249,14 @@ class MSDBlock3d(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.weight, a=np.sqrt(5))
+        for weight in self.weights:
+            torch.nn.init.kaiming_uniform_(weight, a=np.sqrt(5))
+
         if self.bias is not None:
             fan_in, _ = torch.nn.init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / np.sqrt(fan_in)
             torch.nn.init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input):
-        return msdblock(input, self.weight, self.bias, self.dilations, self.blocksize)
+        return msdblock(input, self.bias, self.dilations, self.blocksize,
+                        *self.weights)
