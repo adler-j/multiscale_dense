@@ -3,11 +3,29 @@ import torch
 import time
 import numpy as np
 
+device = 'cuda'
+
 N = 1
 
 # Set up problem
-img = torch.nn.Parameter(torch.ones((1, 1, 512, 512)))
-model = msd.MSDBlock2d(1, [i + 1 for i in range(10)], blocksize=4)
+img = torch.nn.Parameter(torch.ones((1, 1, 512, 512))).to(device)
+model = msd.MSDBlock2d(1, [i + 1 for i in range(2)], blocksize=32).to(device)
+
+# Warmup
+result1 = model(img)
+loss = torch.mean(result1)
+loss.backward()
+
+# Compare to convolution
+conv = torch.nn.Sequential(
+        torch.nn.Conv2d(1, 32, 3, padding=1),
+        torch.nn.ReLU(),
+        torch.nn.Conv2d(32, 32, 3, padding=1)).to(device)
+
+# Warmup
+result2 = model(img)
+loss = torch.mean(result2)
+loss.backward()
 
 # Apply dense block
 t0 = time.time()
@@ -16,11 +34,6 @@ for i in range(N):
 t1 = time.time()
 print('Dense Block timing: ', (t1 - t0) / N)
 
-# Compare to convolution
-conv = torch.nn.Sequential(
-        torch.nn.Conv2d(1, 32, 3, padding=1),
-        torch.nn.ReLU(),
-        torch.nn.Conv2d(32, 32, 3, padding=1))
 
 # Apply convolution
 t0 = time.time()

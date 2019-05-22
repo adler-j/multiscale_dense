@@ -13,59 +13,60 @@ class MSDBlockImpl(torch.autograd.Function):
 
     @staticmethod
     def forward(cxt, input, bias, dilations, blocksize, *weights):
-        cxt.stride = 1
-        cxt.paddings = dilations
-        cxt.groups = 1
-        cxt.dilations = dilations
-        cxt.n_conv = len(dilations)
-        cxt.blocksize = blocksize
-        cxt.ndim = input.dim() - 2
+        with torch.no_grad():
+            cxt.stride = 1
+            cxt.paddings = dilations
+            cxt.groups = 1
+            cxt.dilations = dilations
+            cxt.n_conv = len(dilations)
+            cxt.blocksize = blocksize
+            cxt.ndim = input.dim() - 2
 
-        if cxt.ndim == 1:
-            conv = torch.nn.functional.conv1d
-        elif cxt.ndim == 2:
-            conv = torch.nn.functional.conv2d
-        elif cxt.ndim == 3:
-            conv = torch.nn.functional.conv3d
-        else:
-            raise ValueError('Only supports 1 2 or 3 dimensions')
+            if cxt.ndim == 1:
+                conv = torch.nn.functional.conv1d
+            elif cxt.ndim == 2:
+                conv = torch.nn.functional.conv2d
+            elif cxt.ndim == 3:
+                conv = torch.nn.functional.conv3d
+            else:
+                raise ValueError('Only supports 1 2 or 3 dimensions')
 
-        result = torch.empty(input.shape[0],
-                             input.shape[1] + blocksize * cxt.n_conv,
-                             *input.shape[2:],
-                             device=input.device)
-        result[:, :input.shape[1]] = input
+            result = torch.empty(input.shape[0],
+                                 input.shape[1] + blocksize * cxt.n_conv,
+                                 *input.shape[2:],
+                                 device=input.device)
+            result[:, :input.shape[1]] = input
 
-        result_start = input.shape[1]
-        bias_start = 0
+            result_start = input.shape[1]
+            bias_start = 0
 
-        for i in range(cxt.n_conv):
-            # Extract variables
-            sub_weight = weights[i]
-            sub_bias = bias[i * blocksize:(i+1) * blocksize] if bias is not None else None
-            padding = cxt.paddings[i]
-            dilation = cxt.dilations[i]
-            
-            # Compute convolution
-            sub_result = conv(
-                result[:, :result_start],
-                sub_weight,
-                sub_bias,
-                cxt.stride, padding, dilation, cxt.groups)
-            
-            # Apply ReLU
-            torch.relu_(sub_result)
+            for i in range(cxt.n_conv):
+                # Extract variables
+                sub_weight = weights[i]
+                sub_bias = bias[i * blocksize:(i+1) * blocksize] if bias is not None else None
+                padding = cxt.paddings[i]
+                dilation = cxt.dilations[i]
 
-            # Update result array
-            result[:, result_start:result_start+blocksize] = sub_result
+                # Compute convolution
+                sub_result = conv(
+                    result[:, :result_start],
+                    sub_weight,
+                    sub_bias,
+                    cxt.stride, padding, dilation, cxt.groups)
 
-            # Update steps etc
-            result_start += blocksize
-            bias_start += blocksize
+                # Apply ReLU
+                torch.relu_(sub_result)
 
-        cxt.save_for_backward(bias, result, *weights)
+                # Update result array
+                result[:, result_start:result_start+blocksize] = sub_result
 
-        return result
+                # Update steps etc
+                result_start += blocksize
+                bias_start += blocksize
+
+            cxt.save_for_backward(bias, result, *weights)
+
+            return result
 
     @staticmethod
     def backward(cxt, grad_output):

@@ -9,8 +9,7 @@ import multiscale_dense as msd
 
 device = 'cuda'
 
-transform = transforms.Compose(
-    [transforms.ToTensor()])
+transform = transforms.Compose([transforms.ToTensor()])
 
 trainset = torchvision.datasets.MNIST(root='./data', train=True,
                                       download=True, transform=transform)
@@ -22,21 +21,20 @@ testset = torchvision.datasets.MNIST(root='./data', train=False,
 testloader = torch.utils.data.DataLoader(testset, batch_size=64,
                                          shuffle=False, num_workers=2)
 
-classes = ('plane', 'car', 'bird', 'cat',
-           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
 
 class ConvNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(1, 32, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(32, 16, 5)
-        self.fc1 = nn.Linear(256, 10)
+        self.conv2 = nn.Conv2d(32, 32, 5)
+        self.conv3 = nn.Conv2d(32, 16, 3)
+        self.fc1 = nn.Linear(16 * 2 * 2, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
+        x = F.relu(self.conv3(x))
         x = x.view(x.shape[0], -1)
         x = self.fc1(x)
         return x
@@ -45,17 +43,17 @@ class ConvNet(nn.Module):
 class MSDNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = msd.MSDBlock2d(1, [1 for i in range(5)],
-                                    blocksize=2)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = msd.MSDBlock2d(11, [1 for i in range(5)],
-                                    blocksize=2)
+        self.msd1 = msd.MSDBlock2d(1, [1 for i in range(5)], blocksize=2)
+        self.msd2 = msd.MSDBlock2d(11, [1 for i in range(5)], blocksize=2)
+        self.msd3 = msd.MSDBlock2d(21, [1 for i in range(5)], blocksize=2)
 
-        self.fc1 = nn.Linear(21 * 7 * 7, 10)
+        self.fc1 = nn.Linear(31 * 7 * 7, 10)
 
     def forward(self, x):
-        x = self.pool(self.conv1(x))
-        x = self.pool(self.conv2(x))
+        x = self.pool(self.msd1(x))
+        x = self.pool(self.msd2(x))
+        x = self.msd3(x)
         x = x.view(x.shape[0], -1)
         x = self.fc1(x)
         return x

@@ -4,6 +4,8 @@ We need to workaround this file since there is a bug with _grad_input_padding
 ignoring the dilation.
 
 See https://github.com/pytorch/pytorch/issues/16012 for more information.
+
+We also re-implement the convNd_weight since the original implementations are exceedingly slow.
 """
 
 import torch
@@ -108,22 +110,15 @@ def conv1d_weight(input, weight_size, grad_output, stride=1, padding=0, dilation
     out_channels = grad_output.shape[1]
     min_batch = input.shape[0]
 
-    grad_output = grad_output.contiguous().repeat(1, in_channels // groups, 1)
-    grad_output = grad_output.contiguous().view(
-        grad_output.shape[0] * grad_output.shape[1], 1, grad_output.shape[2])
+    input = input.detach()
+    weight = torch.empty(weight_size, dtype=input.dtype, device=input.device, requires_grad=True)
 
-    input = input.contiguous().view(1, input.shape[0] * input.shape[1],
-                                    input.shape[2])
+    with torch.enable_grad():
+        result = torch.conv1d(input, weight, None, stride, padding, dilation, groups)
 
-    grad_weight = torch.conv1d(input, grad_output, None, dilation, padding,
-                               stride, in_channels * min_batch)
+    result.backward(grad_output)
 
-    grad_weight = grad_weight.contiguous().view(
-        min_batch, grad_weight.shape[1] // min_batch, grad_weight.shape[2])
-
-    return grad_weight.sum(dim=0).view(
-        in_channels // groups, out_channels, grad_weight.shape[2]).transpose(
-            0, 1).narrow(2, 0, weight_size[2])
+    return weight.grad
 
 
 def conv2d_input(input_size, weight, grad_output, stride=1, padding=0, dilation=1, groups=1):
@@ -197,26 +192,15 @@ def conv2d_weight(input, weight_size, grad_output, stride=1, padding=0, dilation
     out_channels = grad_output.shape[1]
     min_batch = input.shape[0]
 
-    grad_output = grad_output.contiguous().repeat(1, in_channels // groups, 1,
-                                                  1)
-    grad_output = grad_output.contiguous().view(
-        grad_output.shape[0] * grad_output.shape[1], 1, grad_output.shape[2],
-        grad_output.shape[3])
+    input = input.detach()
+    weight = torch.empty(weight_size, dtype=input.dtype, device=input.device, requires_grad=True)
 
-    input = input.contiguous().view(1, input.shape[0] * input.shape[1],
-                                    input.shape[2], input.shape[3])
+    with torch.enable_grad():
+        result = torch.conv2d(input, weight, None, stride, padding, dilation, groups)
 
-    grad_weight = torch.conv2d(input, grad_output, None, dilation, padding,
-                               stride, in_channels * min_batch)
+    result.backward(grad_output)
 
-    grad_weight = grad_weight.contiguous().view(
-        min_batch, grad_weight.shape[1] // min_batch, grad_weight.shape[2],
-        grad_weight.shape[3])
-
-    return grad_weight.sum(dim=0).view(
-        in_channels // groups, out_channels,
-        grad_weight.shape[2], grad_weight.shape[3]).transpose(0, 1).narrow(
-            2, 0, weight_size[2]).narrow(3, 0, weight_size[3])
+    return weight.grad
 
 
 def conv3d_input(input_size, weight, grad_output, stride=1, padding=0, dilation=1, groups=1):
@@ -290,24 +274,12 @@ def conv3d_weight(input, weight_size, grad_output, stride=1, padding=0, dilation
     out_channels = grad_output.shape[1]
     min_batch = input.shape[0]
 
-    grad_output = grad_output.repeat(1, in_channels // groups, 1, 1, 1)
-    grad_output = grad_output.contiguous().view(
-        grad_output.shape[0] * grad_output.shape[1], 1, grad_output.shape[2],
-        grad_output.shape[3], grad_output.shape[4])
+    input = input.detach()
+    weight = torch.empty(weight_size, dtype=input.dtype, device=input.device, requires_grad=True)
 
-    input = input.contiguous().view(1, input.shape[0] * input.shape[1],
-                                    input.shape[2], input.shape[3],
-                                    input.shape[4])
+    with torch.enable_grad():
+        result = torch.conv3d(input, weight, None, stride, padding, dilation, groups)
 
-    grad_weight = torch.conv3d(input, grad_output, None, dilation, padding,
-                               stride, in_channels * min_batch)
+    result.backward(grad_output)
 
-    grad_weight = grad_weight.contiguous().view(
-        min_batch, grad_weight.shape[1] // min_batch, grad_weight.shape[2],
-        grad_weight.shape[3], grad_weight.shape[4])
-
-    return grad_weight.sum(dim=0).view(
-        in_channels // groups, out_channels, grad_weight.shape[2],
-        grad_weight.shape[3], grad_weight.shape[4]).transpose(0, 1).narrow(
-            2, 0, weight_size[2]).narrow(3, 0, weight_size[3]).narrow(
-                4, 0, weight_size[4])
+    return weight.grad
