@@ -86,14 +86,14 @@ class MSDBlockImpl(torch.autograd.Function):
 
         n_conv = cxt.n_conv
         blocksize = cxt.blocksize
-        
+
         # Input is part of the result, so we can extract it
         input = result[:, :weights[0].shape[1]]
 
         grad_bias = torch.empty_like(bias) if bias is not None else None
-        grad_input = grad_output.clone()
+        gradients = grad_output.clone()
         grad_weights = []
-        
+
         result_end = input.shape[1] + n_conv * blocksize
         result_start = result_end - blocksize
 
@@ -104,14 +104,14 @@ class MSDBlockImpl(torch.autograd.Function):
             dilation = cxt.dilations[idx]
 
             # Get subsets
-            sub_grad_output = grad_input[:, -blocksize:]
+            sub_grad_output = gradients[:, result_start:result_end]
             sub_weight = weights[idx]
 
             # Gradient of ReLU
             sub_grad_output *= (result[:, result_start:result_end] > 0).type(sub_grad_output.dtype)
 
             # Gradient w.r.t weights
-            if True and cxt.needs_input_grad[i + IDX_WEIGHT_START]:
+            if cxt.needs_input_grad[i + IDX_WEIGHT_START]:
                 sub_input = result[:, :result_start]
                 sub_weight_shape = sub_weight.shape
 
@@ -126,18 +126,18 @@ class MSDBlockImpl(torch.autograd.Function):
             sub_grad_input = conv_input(
                 input_shape, sub_weight, sub_grad_output,
                 cxt.stride, padding, dilation, cxt.groups)
+            gradients[:, :result_start] += sub_grad_input
 
             # Gradient of Bias
             if bias is not None and cxt.needs_input_grad[1]:
-                sum_idx = [0] + list(range(2,2+cxt.ndim))
+                sum_idx = [0] + list(range(2, 2+cxt.ndim))
                 grad_bias[idx * blocksize:(idx + 1) * blocksize] = sub_grad_output.sum(sum_idx)
-            
-            # Gradient of concatenation
-            grad_input = grad_input[:, :-blocksize] + sub_grad_input
 
             # Update positions etc
             result_end -= blocksize
             result_start = result_end - blocksize
+
+        grad_input = gradients[:, :input.shape[1]]
 
         return (grad_input, grad_bias, None, None, *grad_weights)
 
@@ -201,8 +201,8 @@ class MSDBlock1d(torch.nn.Module):
     def forward(self, input):
         return msdblock(input, self.bias, self.dilations, self.blocksize,
                         *self.weights)
-    
-    
+
+
 class MSDBlock2d(torch.nn.Module):
     def __init__(self, in_channels, dilations, kernel_size=3, blocksize=1, bias=True):
         """Multi-scale dense block

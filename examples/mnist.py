@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 import multiscale_dense as msd
 
-device = 'cuda'
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 transform = transforms.Compose([transforms.ToTensor()])
 

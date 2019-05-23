@@ -3,13 +3,13 @@ import torch
 import time
 import numpy as np
 
-device = 'cuda'
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 N = 1
 
 # Set up problem
 img = torch.nn.Parameter(torch.ones((1, 1, 512, 512))).to(device)
-model = msd.MSDBlock2d(1, [1]*10, blocksize=4).to(device)
+model = msd.MSDBlock2d(1, [i + 1 for i in range(100)], blocksize=1).to(device)
 
 # warmup
 result1 = model(img)
